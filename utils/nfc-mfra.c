@@ -36,8 +36,8 @@
  */
 
 /**
- * @file nfc-mfclassic.c
- * @brief MIFARE Classic manipulation example
+ * @file nfc-mfra.c
+ * @brief MIFARE Classic random access tool
  */
 
 #ifdef HAVE_CONFIG_H
@@ -49,6 +49,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <stdbool.h>
+#include <unistd.h>
 
 #include <string.h>
 #include <ctype.h>
@@ -90,6 +91,7 @@ static const nfc_modulation nmMifare = {
 static size_t num_keys = sizeof(keys) / 6;
 
 #define MAX_FRAME_LEN 264
+static int SECTOR_SIZE = 4;
 
 static uint8_t abtRx[MAX_FRAME_LEN];
 static int szRxBits;
@@ -294,8 +296,10 @@ get_rats(void)
 }
 
 static  bool
-read_card(int read_unlocked)
+read_sector(uint8_t iSector, int read_unlocked)
 {
+  int32_t iTrailerBlock = ((iSector+1)*4)-1;
+  int32_t iFirstDataBlock = iTrailerBlock-SECTOR_SIZE+1;
   int32_t iBlock;
   bool    bFailure = false;
   uint32_t uiReadBlocks = 0;
@@ -304,9 +308,9 @@ read_card(int read_unlocked)
     if (!unlock_card())
       return false;
 
-  printf("Reading out %d blocks |", uiBlocks + 1);
+  printf("Reading sector %d, blocks from %d to %d |", iSector, iTrailerBlock, iFirstDataBlock);
   // Read the card from end to begin
-  for (iBlock = uiBlocks; iBlock >= 0; iBlock--) {
+  for (iBlock=iTrailerBlock; iBlock >= iFirstDataBlock; iBlock--) {
     // Authenticate everytime we reach a trailer block
     if (is_trailer_block(iBlock)) {
       if (bFailure) {
@@ -322,17 +326,8 @@ read_card(int read_unlocked)
       
       // Try to authenticate for the current sector
       if (!read_unlocked && !authenticate(iBlock)) {
-        // If we tolerat failures then skip the sector
-        if(bTolerateFailures){
-          iBlock -= 3;// the (iBlock--) will be activated at the end of the for
-          bFailure = true;
-          printf("\033[A\033[%dC\033[Kxxxx", (uiBlocks-iBlock+20));
-          //printf("\033[A\033[2K\033[A");
-          rewind(stdout);
-          continue;
-        } else {
           printf("!\nError: authentication failed for block %02d (sector %02d)\n", iBlock, (iBlock/4));
-        }
+          return false;
       }
       // Try to read out the trailer
       if (nfc_initiator_mifare_cmd(pnd, MC_READ, iBlock, &mp)) {
@@ -366,15 +361,17 @@ read_card(int read_unlocked)
       return false;
   }
   printf("|\n");
-  printf("Done, %d of %d blocks read.\n", uiReadBlocks, uiBlocks + 1);
+  printf("Done, %d of %d blocks read.\n", uiReadBlocks, SECTOR_SIZE);
   fflush(stdout);
 
   return true;
 }
 
 static  bool
-write_card(int write_block_zero)
+write_sector(uint8_t iSector, int write_block_zero)
 {
+  uint32_t iTrailerBlock = ((iSector+1)*4)-1;
+  uint32_t iFirstDataBlock = iTrailerBlock-SECTOR_SIZE+1;
   uint32_t uiBlock;
   bool    bFailure = false;
   uint32_t uiWriteBlocks = 0;
@@ -383,9 +380,9 @@ write_card(int write_block_zero)
     if (!unlock_card())
       return false;
 
-  printf("Writing %d blocks |", uiBlocks + 1);
+  printf("Writing sector %d, blocks from %d to %d |", iSector, iFirstDataBlock, iTrailerBlock);
   // Write the card from begin to end;
-  for (uiBlock = 0; uiBlock <= uiBlocks; uiBlock++) {
+  for (uiBlock = iFirstDataBlock; uiBlock <= iTrailerBlock; uiBlock++) {
     // Authenticate everytime we reach the first sector of a new block
     if (is_first_block(uiBlock)) {
       if (bFailure) {
@@ -402,13 +399,7 @@ write_card(int write_block_zero)
       // Try to authenticate for the current sector
       if (!write_block_zero && !authenticate(uiBlock)) {
         printf("!\nError: authentication failed for block %02d (sector %02d)\n", uiBlock, (uiBlock/4));
-        if(bTolerateFailures){
-          uiBlock += 3;
-          bFailure = true;
-          continue;
-        } else {
           return false;
-        }
       }
     }
 
@@ -451,9 +442,19 @@ write_card(int write_block_zero)
       return false;
   }
   printf("|\n");
-  printf("Done, %d of %d blocks written.\n", uiWriteBlocks, uiBlocks + 1);
+  printf("Done, %d of %d blocks written.\n", uiWriteBlocks, SECTOR_SIZE);
   fflush(stdout);
 
+  return true;
+}
+
+static bool
+areDigits(char* str){
+  for (int i = 0; i < strlen(str); ++i) {
+    if (!isdigit(str[i])) {
+      return false;
+    }
+  }
   return true;
 }
 
@@ -467,15 +468,15 @@ static void
 print_usage(const char *pcProgramName)
 {
   printf("Usage: ");
-  printf("%s r|R|w|W a|b <dump.mfd> [<keys.mfd> [f]]\n", pcProgramName);
-  printf("  r|R|w|W       - Perform read from (r) or unlocked read from (R) or write to (w) or unlocked write to (W) card\n");
-  printf("                  *** note that unlocked write will attempt to overwrite block 0 including UID\n");
-  printf("                  *** unlocked read does not require authentication and will reveal A and B keys\n");
-  printf("                  *** unlocking only works with special Mifare 1K cards (Chinese clones)\n");
-  printf("  a|A|b|B       - Use A or B keys for action; Halt on errors (a|b) or tolerate errors (A|B)\n");
-  printf("  <dump.mfd>    - MiFare Dump (MFD) used to write (card to MFD) or (MFD to card)\n");
-  printf("  <keys.mfd>    - MiFare Dump (MFD) that contain the keys (optional)\n");
-  printf("  f             - Force using the keyfile even if UID does not match (optional)\n");
+  printf("%s [-r|w] [-a|b] -s <sectorId> -d <dump.mfd> [-k <keys.mfd>] [-u]\n", pcProgramName);
+  printf("  -r|w read or write tag\n");
+  printf("  -a|b use key A or B for authentification\n");
+  printf("  -s <sectorId> select random sector\n");
+  printf("  -d <dump.mfd> dump file (writen when -r and read when -w)\n");
+  printf("  -k <keys.mfd> key file\n");
+  printf("  -p append a dump when -r and overwite blocks in dump\n");
+  printf("  -u unlock mode for magic cards \n");
+  printf("  -h help \n");
 }
 
 int
@@ -484,37 +485,106 @@ main(int argc, const char *argv[])
   action_t atAction = ACTION_USAGE;
   uint8_t *pbtUID;
   int    unlock = 0;
+  int   iSector = -1;
+  int optch;
+  bool bAppendRead = false;
+  bool bKeyChoosen = false;
+  bool bReadWriteChoosen = false;
+  char format[] = "abhpruwd:k:s:";
+  char dumpFile[30];
+  char keyFile[30];
+  uint8_t lSector[16];
+  uint8_t ilSector = 0;
+  extern int opterr;
+  opterr = 1;
+  bUseKeyFile = false;
 
   if (argc < 2) {
     print_usage(argv[0]);
     exit(EXIT_FAILURE);
   }
-  const char *command = argv[1];
+  
+  while ((optch = getopt(argc, argv, format)) != -1){
+    switch (optch) {
+      case 'h':
+        print_usage(argv[0]);
+        exit(EXIT_FAILURE);
+        break;
+      case 'a':
+        if(bKeyChoosen){
+          printf("Impossible de combiner -a et -b\n");
+          print_usage(argv[0]);
+          exit(EXIT_FAILURE);
+        }
 
-  if (strcmp(command, "r") == 0 || strcmp(command, "R") == 0) {
-    if (argc < 4) {
-      print_usage(argv[0]);
-      exit(EXIT_FAILURE);
+        bUseKeyA = true;
+        bKeyChoosen = true;
+        break;
+      case 'b':
+        if(bKeyChoosen){
+          printf("Impossible de combiner -a et -b\n");
+          print_usage(argv[0]);
+          exit(EXIT_FAILURE);
+        }
+
+        bUseKeyA = false;
+        bKeyChoosen = true;
+        break;
+      case 'r':
+        if(bReadWriteChoosen){
+          printf("Impossible de combiner -r et -w\n");
+          print_usage(argv[0]);
+          exit(EXIT_FAILURE);
+        }
+
+        atAction = ACTION_READ;
+        bTolerateFailures = true;
+        bReadWriteChoosen = true;
+        break;
+      case 'w':
+        if(bReadWriteChoosen){
+          printf("Impossible de combiner -r et -w\n");
+          print_usage(argv[0]);
+          exit(EXIT_FAILURE);
+        }
+
+        atAction = ACTION_WRITE;
+        bTolerateFailures = true;
+        bReadWriteChoosen = true;
+        break;
+      case 'p':
+        bAppendRead = true;
+        break;
+      case 'u':
+        unlock = 1;
+        break;
+      case 'd':
+        memcpy(dumpFile, optarg, 30);
+        break;
+      case 'k':
+        memcpy(keyFile, optarg, 30);
+        bUseKeyFile = true;
+        bForceKeyFile = true;
+        break;
+      case 's':
+        iSector = atoi(optarg);
+        if(!areDigits(optarg) || iSector < 0 || iSector > 15){
+          printf("-s must be an integer between 0 and 15\n");
+          print_usage(argv[0]);
+          exit(EXIT_FAILURE);
+        }
+        if(iSector < 0 || iSector > 15){
+          print_usage(argv[0]);
+          exit(EXIT_FAILURE);
+        }
+        lSector[ilSector++] = iSector;
+        break;
     }
-    atAction = ACTION_READ;
-    if (strcmp(command, "R") == 0)
-      unlock = 1;
-    bUseKeyA = tolower((int)((unsigned char) * (argv[2]))) == 'a';
-    bTolerateFailures = tolower((int)((unsigned char) * (argv[2]))) != (int)((unsigned char) * (argv[2]));
-    bUseKeyFile = (argc > 4);
-    bForceKeyFile = ((argc > 5) && (strcmp((char *)argv[5], "f") == 0));
-  } else if (strcmp(command, "w") == 0 || strcmp(command, "W") == 0) {
-    if (argc < 4) {
-      print_usage(argv[0]);
-      exit(EXIT_FAILURE);
-    }
-    atAction = ACTION_WRITE;
-    if (strcmp(command, "W") == 0)
-      unlock = 1;
-    bUseKeyA = tolower((int)((unsigned char) * (argv[2]))) == 'a';
-    bTolerateFailures = tolower((int)((unsigned char) * (argv[2]))) != (int)((unsigned char) * (argv[2]));
-    bUseKeyFile = (argc > 4);
-    bForceKeyFile = ((argc > 5) && (strcmp((char *)argv[5], "f") == 0));
+  }
+
+  if(!bKeyChoosen || !bReadWriteChoosen){
+    print_usage(argv[0]);
+    exit(EXIT_FAILURE);
   }
 
   if (atAction == ACTION_USAGE) {
@@ -523,13 +593,13 @@ main(int argc, const char *argv[])
   }
   // We don't know yet the card size so let's read only the UID from the keyfile for the moment
   if (bUseKeyFile) {
-    FILE *pfKeys = fopen(argv[4], "rb");
+    FILE *pfKeys = fopen(keyFile, "rb");
     if (pfKeys == NULL) {
-      printf("Could not open keys file: %s\n", argv[4]);
+      printf("Could not open keys file: %s\n", keyFile);
       exit(EXIT_FAILURE);
     }
     if (fread(&mtKeys, 1, 4, pfKeys) != 4) {
-      printf("Could not read UID from key file: %s\n", argv[4]);
+      printf("Could not read UID from key file: %s\n", keyFile);
       fclose(pfKeys);
       exit(EXIT_FAILURE);
     }
@@ -631,32 +701,32 @@ main(int argc, const char *argv[])
   printf("Guessing size: seems to be a %i-byte card\n", (uiBlocks + 1) * 16);
 
   if (bUseKeyFile) {
-    FILE *pfKeys = fopen(argv[4], "rb");
+    FILE *pfKeys = fopen(keyFile, "rb");
     if (pfKeys == NULL) {
-      printf("Could not open keys file: %s\n", argv[4]);
+      printf("Could not open keys file: %s\n", keyFile);
       exit(EXIT_FAILURE);
     }
     if (fread(&mtKeys, 1, (uiBlocks + 1) * sizeof(mifare_classic_block), pfKeys) != (uiBlocks + 1) * sizeof(mifare_classic_block)) {
-      printf("Could not read keys file: %s\n", argv[4]);
+      printf("Could not read keys file: %s\n", keyFile);
       fclose(pfKeys);
       exit(EXIT_FAILURE);
     }
     fclose(pfKeys);
   }
 
-  if (atAction == ACTION_READ) {
+  if (atAction == ACTION_READ && !bAppendRead) {
     memset(&mtDump, 0x00, sizeof(mtDump));
   } else {
-    FILE *pfDump = fopen(argv[3], "rb");
+    FILE *pfDump = fopen(dumpFile, "rb");
 
     if (pfDump == NULL) {
-      printf("Could not open dump file: %s\n", argv[3]);
+      printf("Could not open dump file: %s\n", dumpFile);
       exit(EXIT_FAILURE);
 
     }
 
     if (fread(&mtDump, 1, (uiBlocks + 1) * sizeof(mifare_classic_block), pfDump) != (uiBlocks + 1) * sizeof(mifare_classic_block)) {
-      printf("Could not read dump file: %s\n", argv[3]);
+      printf("Could not read dump file: %s\n", dumpFile);
       fclose(pfDump);
       exit(EXIT_FAILURE);
     }
@@ -664,31 +734,32 @@ main(int argc, const char *argv[])
   }
 // printf("Successfully opened required files\n");
 
-  if (atAction == ACTION_READ) {
-    if (read_card(unlock)) {
-      printf("Writing data to file: %s ...", argv[3]);
-      fflush(stdout);
-      FILE *pfDump = fopen(argv[3], "wb");
-      if (pfDump == NULL) {
-        printf("Could not open dump file: %s\n", argv[3]);
-        nfc_close(pnd);
-        nfc_exit(context);
-        exit(EXIT_FAILURE);
-      }
-      if (fwrite(&mtDump, 1, (uiBlocks + 1) * sizeof(mifare_classic_block), pfDump) != ((uiBlocks + 1) * sizeof(mifare_classic_block))) {
-        printf("\nCould not write to file: %s\n", argv[3]);
+  for(int i=0; i < ilSector; i++){
+    if (atAction == ACTION_READ) {
+      if (read_sector(lSector[i], unlock)) {
+        printf("Writing data to file: %s ...", dumpFile);
+        fflush(stdout);
+        FILE *pfDump = fopen(dumpFile, "wb");
+        if (pfDump == NULL) {
+          printf("Could not open dump file: %s\n", dumpFile);
+          nfc_close(pnd);
+          nfc_exit(context);
+          exit(EXIT_FAILURE);
+        }
+        if (fwrite(&mtDump, 1, (uiBlocks + 1) * sizeof(mifare_classic_block), pfDump) != ((uiBlocks + 1) * sizeof(mifare_classic_block))) {
+          printf("\nCould not write to file: %s\n", dumpFile);
+          fclose(pfDump);
+          nfc_close(pnd);
+          nfc_exit(context);
+          exit(EXIT_FAILURE);
+        }
+        printf("Done.\n");
         fclose(pfDump);
-        nfc_close(pnd);
-        nfc_exit(context);
-        exit(EXIT_FAILURE);
       }
-      printf("Done.\n");
-      fclose(pfDump);
+    } else if (atAction == ACTION_WRITE) {
+      write_sector(lSector[i], unlock);
     }
-  } else if (atAction == ACTION_WRITE) {
-    write_card(unlock);
   }
-
   nfc_close(pnd);
   nfc_exit(context);
   exit(EXIT_SUCCESS);

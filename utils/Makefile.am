@@ -2,6 +2,7 @@ bin_PROGRAMS = \
 		nfc-emulate-forum-tag4 \
 		nfc-list \
 		nfc-mfclassic \
+		nfc-mfra \
 		nfc-mfultralight \
 		nfc-read-forum-tag3 \
 		nfc-relay-picc \
@@ -24,6 +25,10 @@ nfc_list_LDADD = $(top_builddir)/libnfc/libnfc.la \
 
 nfc_mfclassic_SOURCES = nfc-mfclassic.c mifare.c mifare.h nfc-utils.h
 nfc_mfclassic_LDADD = $(top_builddir)/libnfc/libnfc.la \
+		    libnfcutils.la
+
+nfc_mfra_SOURCES = nfc-mfra.c mifare.c mifare.h nfc-utils.h
+nfc_mfra_LDADD = $(top_builddir)/libnfc/libnfc.la \
 		    libnfcutils.la
 
 nfc_mfultralight_SOURCES = nfc-mfultralight.c mifare.c mifare.h nfc-utils.h

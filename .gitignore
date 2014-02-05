@@ -110,6 +110,7 @@ utils/Makefile.in
 utils/nfc-emulate-forum-tag4
 utils/nfc-list
 utils/nfc-mfclassic
+utils/nfc-mfra
 utils/nfc-mfultralight
 utils/nfc-read-forum-tag3
 utils/nfc-relay-picc

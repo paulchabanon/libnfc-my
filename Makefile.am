@@ -1,4 +1,4 @@
-ACLOCAL_AMFLAGS = -I m4
+ACLOCAL_AMFLAGS = -I m4 /opt/local/share/aclocal
 
 AM_CFLAGS = $(LIBNFC_CFLAGS)
 
