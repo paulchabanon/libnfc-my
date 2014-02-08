@@ -468,12 +468,12 @@ static void
 print_usage(const char *pcProgramName)
 {
   printf("Usage: ");
-  printf("%s [-r|w] [-a|b] -s <sectorId> -d <dump.mfd> [-k <keys.mfd>] [-u]\n", pcProgramName);
+  printf("%s [-r|w] [-a|b] -s <sectorId> <dump.mfd> [<keys.mfd>] [-u -p -h]\n", pcProgramName);
   printf("  -r|w read or write tag\n");
   printf("  -a|b use key A or B for authentification\n");
   printf("  -s <sectorId> select random sector\n");
-  printf("  -d <dump.mfd> dump file (writen when -r and read when -w)\n");
-  printf("  -k <keys.mfd> key file\n");
+  printf("  <dump.mfd> dump file (writen when -r and read when -w)\n");
+  printf("  <keys.mfd> key file\n");
   printf("  -p append a dump when -r and overwite blocks in dump\n");
   printf("  -u unlock mode for magic cards \n");
   printf("  -h help \n");
@@ -493,8 +493,9 @@ main(int argc, const char *argv[])
   char format[] = "abhpruwd:k:s:";
   char dumpFile[30];
   char keyFile[30];
+  int ilSector = 0;
   uint8_t lSector[16];
-  uint8_t ilSector = 0;
+  uint8_t iArg = 1;
   extern int opterr;
   opterr = 1;
   bUseKeyFile = false;
@@ -558,14 +559,14 @@ main(int argc, const char *argv[])
       case 'u':
         unlock = 1;
         break;
-      case 'd':
+      /*case 'd':
         memcpy(dumpFile, optarg, 30);
         break;
       case 'k':
         memcpy(keyFile, optarg, 30);
         bUseKeyFile = true;
         bForceKeyFile = true;
-        break;
+        break;//*/
       case 's':
         iSector = atoi(optarg);
         if(!areDigits(optarg) || iSector < 0 || iSector > 15){
@@ -580,17 +581,43 @@ main(int argc, const char *argv[])
         lSector[ilSector++] = iSector;
         break;
     }
+    ++iArg;
   }
 
+  if(argc <= iArg){
+    printf("dump file is missing\n");
+    print_usage(argv[0]);
+    exit(EXIT_FAILURE);
+  }
+  memcpy(dumpFile, argv[iArg++], 30);
+  printf("Using dumpfile %s\n", dumpFile);
+  
+  if(argc > iArg){
+    memcpy(keyFile, argv[iArg++], 30);
+    printf("Using keyfile %s\n", keyFile);
+    bUseKeyFile = true;
+    bForceKeyFile = true;
+  }
+  
+
   if(!bKeyChoosen || !bReadWriteChoosen){
+    printf("choose read or write and A or B key\n");
     print_usage(argv[0]);
     exit(EXIT_FAILURE);
   }
 
   if (atAction == ACTION_USAGE) {
+    printf("choose read or write (-r or -w)\n");
     print_usage(argv[0]);
     exit(EXIT_FAILURE);
   }
+  
+  if (ilSector == 0) {
+    printf("sector Id is missing (-s)\n");
+    print_usage(argv[0]);
+    exit(EXIT_FAILURE);
+  }
+
   // We don't know yet the card size so let's read only the UID from the keyfile for the moment
   if (bUseKeyFile) {
     FILE *pfKeys = fopen(keyFile, "rb");
@@ -699,7 +726,7 @@ main(int argc, const char *argv[])
     }
   }
   printf("Guessing size: seems to be a %i-byte card\n", (uiBlocks + 1) * 16);
-
+  
   if (bUseKeyFile) {
     FILE *pfKeys = fopen(keyFile, "rb");
     if (pfKeys == NULL) {
@@ -713,7 +740,7 @@ main(int argc, const char *argv[])
     }
     fclose(pfKeys);
   }
-
+  
   if (atAction == ACTION_READ && !bAppendRead) {
     memset(&mtDump, 0x00, sizeof(mtDump));
   } else {
