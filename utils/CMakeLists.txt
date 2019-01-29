@@ -1,6 +1,7 @@
 SET(UTILS-SOURCES 
   nfc-emulate-forum-tag4
   nfc-list
+  nfc-mfra
   nfc-mfclassic
   nfc-mfultralight
   nfc-read-forum-tag3
@@ -26,9 +27,9 @@ FOREACH(source ${UTILS-SOURCES})
     LIST(APPEND TARGETS ${CMAKE_CURRENT_BINARY_DIR}/../windows/${source}.rc)
   ENDIF(WIN32)
 
-  IF((${source} MATCHES "nfc-mfultralight") OR (${source} MATCHES "nfc-mfclassic"))
+  IF((${source} MATCHES "nfc-mfultralight") OR (${source} MATCHES "nfc-mfclassic") OR (${source} MATCHES "nfc-mfra"))
     LIST(APPEND TARGETS mifare)
-  ENDIF((${source} MATCHES "nfc-mfultralight") OR (${source} MATCHES "nfc-mfclassic"))
+  ENDIF((${source} MATCHES "nfc-mfultralight") OR (${source} MATCHES "nfc-mfclassic") OR (${source} MATCHES "nfc-mfra"))
 
   IF(WIN32)
     IF(${source} MATCHES "nfc-scan-device")
